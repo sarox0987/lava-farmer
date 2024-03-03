@@ -12,7 +12,7 @@ import (
 )
 
 type env struct {
-	EthTestnet   string `json:"eth_testnet"`
+	EthMainnet   string `json:"eth_mainnet"`
 	EvmosMainnet string `json:"evmos_mainnet"`
 	EvmosTestnet string `json:"evmos_testnet"`
 	StarkTestnet string `json:"stark_testnet"`
@@ -59,13 +59,13 @@ func main() {
 		fmt.Printf("  }\n\n")
 	}
 
-	ethT := ethereum.NewNetwork(e.EthTestnet, w)
+	ethM := ethereum.NewNetwork(e.EthMainnet, w)
 
 	fmt.Print("Enter >>> ")
 
 	reader := bufio.NewReader(os.Stdin)
 	reader.ReadString('\n')
 	go starkT.Run()
-	go ethT.Run()
+	go ethM.Run()
 	select {}
 }
