@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"math/rand"
+	"net/http"
 	"os"
 	"time"
 
@@ -31,9 +33,11 @@ type starkAccount struct {
 }
 
 type network struct {
-	accounts map[string]starkAccount
+	Accounts map[string]starkAccount
 	p        *srpc.Provider
 	chainId  string
+	ctx      context.Context
+	r        *rand.Rand
 }
 
 type faccount struct {
@@ -42,16 +46,38 @@ type faccount struct {
 	Addreess string `json:"address"`
 }
 
+func (n *network) provider() *srpc.Provider {
+	t := n.r.Intn(180) + 1
+	time.Sleep(time.Duration(t) * time.Second)
+	return n.p
+}
+
 func NewNetwork(url string) *network {
 	file, err := os.OpenFile("stark-accounts.json", os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
 		panic(err)
 	}
+
 	defer file.Close()
 	data, err := io.ReadAll(file)
 	if err != nil {
 		panic(err)
 	}
+
+	hdr := http.Header{}
+	hdr.Set("accept", "application/json")
+	hdr.Set("accept-language", "en-US,en;q=0.9")
+	hdr.Set("content-type", "application/json")
+	hdr.Set("priority", "u=1, i")
+	hdr.Set("sec-ch-ua", `"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"`)
+	hdr.Set("sec-ch-ua-mobile", "?0")
+	hdr.Set("sec-ch-ua-platform", `"windows"`)
+	hdr.Set("sec-fetch-dest", "empty")
+	hdr.Set("sec-fetch-mode", "cors")
+	hdr.Set("sec-fetch-site", "none")
+	hdr.Set("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.135 Safari/537.36 Edge/12.246")
+
+	ctx := rpc.NewContextWithHeaders(context.Background(), hdr)
 
 	accs := []faccount{}
 	if len(data) > 0 {
@@ -59,135 +85,137 @@ func NewNetwork(url string) *network {
 			panic(err)
 		}
 	}
+	var chainId string
+
 	c, err := rpc.Dial(url)
 	if err != nil {
 		panic(err)
 	}
 	p := srpc.NewProvider(c)
-	chianId, err := p.ChainID(context.Background())
+	cId, err := p.ChainID(ctx)
 	if err != nil {
 		panic(err)
 	}
+	chainId = cId
+
 	n := &network{
-		accounts: make(map[string]starkAccount),
+		Accounts: make(map[string]starkAccount),
 		p:        p,
-		chainId:  chianId,
+		chainId:  chainId,
+		ctx:      ctx,
+		r:        rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
+	// if chainId == "SN_MAIN" {
+	// 	return n
+	// }
 
-	if len(accs) == 0 {
-		for i := 0; i < 10; i++ {
-			ks, pub, pk := account.GetRandomKeys()
-			accountAddressFelt, _ := new(felt.Felt).SetString("0x1")
-			a, err := account.NewAccount(p, accountAddressFelt, pub.String(), ks, 2)
-			if err != nil {
-				continue
-			}
+	// if len(accs) == 0 {
+	// 	for i := 0; i < 10; i++ {
+	// 		ks, pub, pk := account.GetRandomKeys()
+	// 		accountAddressFelt, _ := new(felt.Felt).SetString("0x1")
+	// 		a, err := account.NewAccount(n.ps[i%len(ps)], accountAddressFelt, pub.String(), ks, 2)
+	// 		if err != nil {
+	// 			continue
+	// 		}
 
-			precomputedAddress, err := a.PrecomputeAddress(&felt.Zero, pub, classHash, []*felt.Felt{pub})
-			if err != nil {
-				continue
-			}
+	// 		precomputedAddress, err := a.PrecomputeAddress(&felt.Zero, pub, classHash, []*felt.Felt{pub})
+	// 		if err != nil {
+	// 			continue
+	// 		}
 
-			a.AccountAddress = precomputedAddress
-			n.accounts[precomputedAddress.String()] = starkAccount{
-				acc: a,
-				ks:  ks,
-				pub: pub,
-				pk:  pk,
-			}
-			accs = append(accs, faccount{
-				PubKey:   pub.String(),
-				PrvKey:   pk.String(),
-				Addreess: precomputedAddress.String(),
-			})
+	// 		a.AccountAddress = precomputedAddress
+	// 		n.Accounts[precomputedAddress.String()] = starkAccount{
+	// 			acc: a,
+	// 			ks:  ks,
+	// 			pub: pub,
+	// 			pk:  pk,
+	// 		}
+	// 		accs = append(accs, faccount{
+	// 			PubKey:   pub.String(),
+	// 			PrvKey:   pk.String(),
+	// 			Addreess: precomputedAddress.String(),
+	// 		})
+	// 	}
+	// 	b, _ := json.Marshal(accs)
+	// 	_, err := file.Write(b)
+	// 	if err != nil {
+	// 		panic(err)
+	// 	}
+	// } else {
+	for _, acc := range accs {
+		addressFelt, _ := utils.HexToFelt(acc.Addreess)
+		pubFelt, _ := utils.HexToFelt(acc.PubKey)
+		prvFelt, _ := utils.HexToFelt(acc.PrvKey)
+		ks := account.NewMemKeystore()
+		fakePrivKeyBI, ok := new(big.Int).SetString(acc.PrvKey, 0)
+		if !ok {
+			continue
 		}
-		b, _ := json.Marshal(accs)
-		_, err := file.Write(b)
+		ks.Put(acc.PubKey, fakePrivKeyBI)
+		a, err := account.NewAccount(n.p, addressFelt, acc.PubKey, ks, 2)
 		if err != nil {
-			panic(err)
+			fmt.Println(err)
+			continue
 		}
-	} else {
-		for _, acc := range accs {
-			addressFelt, _ := utils.HexToFelt(acc.Addreess)
-			pubFelt, _ := utils.HexToFelt(acc.PubKey)
-			prvFelt, _ := utils.HexToFelt(acc.PrvKey)
-			ks := account.NewMemKeystore()
-			fakePrivKeyBI, ok := new(big.Int).SetString(acc.PrvKey, 0)
-			if !ok {
-				continue
-			}
-			ks.Put(acc.PubKey, fakePrivKeyBI)
-			a, err := account.NewAccount(p, addressFelt, acc.PubKey, ks, 2)
-			if err != nil {
-				continue
-			}
-			n.accounts[acc.Addreess] = starkAccount{
-				acc:      a,
-				ks:       ks,
-				pub:      pubFelt,
-				pk:       prvFelt,
-				deployed: true,
-			}
+		n.Accounts[acc.Addreess] = starkAccount{
+			acc:      a,
+			ks:       ks,
+			pub:      pubFelt,
+			pk:       prvFelt,
+			deployed: true,
 		}
 	}
+	// }
 	return n
 }
 
 func (n *network) Name() string {
 	return "STARK"
 }
-func (n *network) Run() {
-	go func() {
-		for {
-			for a := range n.accounts {
-				n.getBalance(a)
-				time.Sleep(5 * time.Second)
-			}
-		}
-	}()
-	for k, a := range n.accounts {
-		if !a.deployed {
-			time.Sleep(10 * time.Second)
-			go func(k string, a starkAccount) {
-				for {
-					time.Sleep(10 * time.Second)
-					tx := srpc.DeployAccountTxn{
-						Nonce:               &felt.Zero,
-						MaxFee:              new(felt.Felt).SetUint64(4724395326064),
-						Type:                srpc.TransactionType_DeployAccount,
-						Version:             srpc.TransactionV1,
-						Signature:           []*felt.Felt{},
-						ClassHash:           classHash,
-						ContractAddressSalt: a.pub,
-						ConstructorCalldata: []*felt.Felt{a.pub},
-					}
-					pa, _ := utils.HexToFelt(k)
-					err := a.acc.SignDeployAccountTransaction(context.Background(), &tx, pa)
-					if err != nil {
-						continue
-					}
-					resp, err := a.acc.AddDeployAccountTransaction(context.Background(), srpc.BroadcastDeployAccountTxn{DeployAccountTxn: tx})
-					if err != nil {
-						continue
-					}
-					fmt.Printf("contract %s deployed with tx: %s\n", k, resp.TransactionHash.String())
-					break
-				}
-				go launch(a, n.chainId)
 
-			}(k, a)
-		} else {
-			go launch(a, n.chainId)
+func (n *network) Run() {
+	for {
+		for a := range n.Accounts {
+			n.getBalance(a)
+			cid, err := n.provider().ChainID(n.ctx)
+			if err != nil {
+				fmt.Println(err)
+			}
+			fmt.Println("ChainID: ", cid)
+			bn, err := n.provider().BlockNumber(n.ctx)
+			if err != nil {
+				fmt.Println(err)
+			}
+			fmt.Println(cid, " BlockNumber: ", bn)
+
+			bhn, err := n.provider().BlockHashAndNumber(n.ctx)
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
+			countn, err := n.provider().BlockTransactionCount(n.ctx, srpc.BlockID{
+				Number: &bhn.BlockNumber,
+			})
+			if err != nil {
+				fmt.Println(err)
+			}
+			fmt.Println(cid, " BlockTransactionCountWithNumber: ", countn)
+
+			counth, err := n.provider().BlockTransactionCount(n.ctx, srpc.BlockID{
+				Hash: bhn.BlockHash,
+			})
+			fmt.Println(cid, " BlockTransactionCountWithHash: ", counth)
+
+			fmt.Println()
 		}
 	}
 }
 
-func launch(a starkAccount, chainId string) {
-
+func launch(a starkAccount, chainId string, ctx context.Context) {
 	maxfee := new(felt.Felt).SetUint64(4783000019481)
 	for {
-		time.Sleep(10 * time.Second)
-		nonce, err := a.acc.Nonce(context.Background(), srpc.BlockID{Tag: "latest"}, a.acc.AccountAddress)
+		time.Sleep(2 * time.Minute)
+		nonce, err := a.acc.Nonce(ctx, srpc.BlockID{Tag: "latest"}, a.acc.AccountAddress)
 		if err != nil {
 			continue
 		}
@@ -215,13 +243,16 @@ func launch(a starkAccount, chainId string) {
 			continue
 		}
 
-		err = a.acc.SignInvokeTransaction(context.Background(), &InvokeTx)
+		err = a.acc.SignInvokeTransaction(ctx, &InvokeTx)
 		if err != nil {
 			continue
 		}
 
-		a.acc.AddInvokeTransaction(context.Background(), InvokeTx)
-
+		res, err := a.acc.AddInvokeTransaction(ctx, InvokeTx)
+		if err != nil {
+			continue
+		}
+		fmt.Println(res.TransactionHash)
 	}
 }
 
@@ -234,18 +265,20 @@ func (n *network) getBalance(accountAddress string) {
 		EntryPointSelector: utils.GetSelectorFromNameFelt("balanceOf"),
 		Calldata:           []*felt.Felt{accountAddressInFelt},
 	}
-	n.p.Call(context.Background(), tx, srpc.BlockID{Tag: "latest"})
+	f, err := n.provider().Call(n.ctx, tx, srpc.BlockID{Tag: "latest"})
+	fmt.Println(n.chainId, accountAddress, f, err)
 
 	getDecimalsTx := srpc.FunctionCall{
 		ContractAddress:    tokenAddressInFelt,
 		EntryPointSelector: utils.GetSelectorFromNameFelt("decimals"),
 	}
-	n.p.Call(context.Background(), getDecimalsTx, srpc.BlockID{Tag: "latest"})
+	f, err = n.provider().Call(n.ctx, getDecimalsTx, srpc.BlockID{Tag: "latest"})
+	fmt.Println(n.chainId, accountAddress, f, err)
 }
 
 func (n *network) Wallets() []string {
 	ws := []string{}
-	for k := range n.accounts {
+	for k := range n.Accounts {
 		ws = append(ws, k)
 	}
 	return ws

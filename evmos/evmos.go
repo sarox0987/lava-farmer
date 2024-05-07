@@ -6,6 +6,7 @@ import (
 	"lava-farmer/pkg"
 	"log"
 	"math/big"
+	"math/rand"
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts"
@@ -19,19 +20,21 @@ var (
 )
 
 type network struct {
-	w *pkg.Wallet
-	c *ethclient.Client
+	w  *pkg.Wallet
+	ps []*ethclient.Client
 }
 
-func NewNetwork(url string, w *pkg.Wallet) *network {
+func NewNetwork(urls []string, w *pkg.Wallet) *network {
 	n := &network{
 		w: w,
 	}
-	c, err := ethclient.Dial(url)
-	if err != nil {
-		panic(err)
+	for _, url := range urls {
+		c, err := ethclient.Dial(url)
+		if err != nil {
+			panic(err)
+		}
+		n.ps = append(n.ps, c)
 	}
-	n.c = c
 	return n
 }
 
@@ -44,7 +47,7 @@ func (n *network) Wallets() []string {
 }
 
 func (n *network) Run() {
-	chainId, err := n.c.ChainID(context.Background())
+	chainId, err := n.provider().ChainID(context.Background())
 	for _, a := range n.w.Accounts() {
 		if err != nil {
 			fmt.Printf("Failed to retrieve chainID: %v\n", err)
@@ -72,12 +75,12 @@ func (n *network) launch(a accounts.Account, chainId *big.Int) {
 		if !n.enoughFunds(a, minFund, chainId.Int64()) {
 			continue
 		}
-		nonce, err := n.c.NonceAt(context.Background(), a.Address, nil)
+		nonce, err := n.provider().NonceAt(context.Background(), a.Address, nil)
 		if err != nil {
 			log.Printf("Failed to retrieve nonce: %v", err)
 		}
 
-		gasPrice, err := n.c.SuggestGasPrice(context.Background())
+		gasPrice, err := n.provider().SuggestGasPrice(context.Background())
 		if err != nil {
 			log.Printf("Failed to suggest gas price: %v", err)
 			continue
@@ -93,7 +96,7 @@ func (n *network) launch(a accounts.Account, chainId *big.Int) {
 			continue
 		}
 
-		err = n.c.SendTransaction(context.Background(), signedTx)
+		err = n.provider().SendTransaction(context.Background(), signedTx)
 		if err != nil {
 			log.Printf("Failed to send transaction: %d %s %v", chainId, a.Address, err)
 			continue
@@ -102,10 +105,9 @@ func (n *network) launch(a accounts.Account, chainId *big.Int) {
 		fmt.Printf("ChainId: %d Address: %s Nonce: %d\n", chainId, a.Address, nonce)
 
 		for {
-			time.Sleep(2 * time.Second)
-			_, isPending, err := n.c.TransactionByHash(context.Background(), signedTx.Hash())
+			_, isPending, err := n.provider().TransactionByHash(context.Background(), signedTx.Hash())
 			if err != nil {
-				time.Sleep(20 * time.Second)
+				fmt.Println(err)
 			}
 			if !isPending {
 				break
@@ -115,7 +117,7 @@ func (n *network) launch(a accounts.Account, chainId *big.Int) {
 }
 
 func (n *network) enoughFunds(a accounts.Account, amount *big.Int, chainId int64) bool {
-	balance, err := n.c.BalanceAt(context.Background(), a.Address, nil)
+	balance, err := n.provider().BalanceAt(context.Background(), a.Address, nil)
 	if err != nil {
 		log.Printf("Failed to retrieve balance: %v", err)
 		return false
@@ -126,4 +128,10 @@ func (n *network) enoughFunds(a accounts.Account, amount *big.Int, chainId int64
 		return false
 	}
 	return true
+}
+
+func (n *network) provider() *ethclient.Client {
+	time.Sleep(60 * time.Second)
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	return n.ps[r.Intn(len(n.ps))]
 }

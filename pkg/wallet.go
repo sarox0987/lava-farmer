@@ -14,16 +14,15 @@ type Wallet struct {
 
 func NewWallet(mn string) *Wallet {
 	if mn == "" {
-		log.Fatal("add mnemonic phrase")
+		mn, _ = hdwallet.NewMnemonic(128)
 	}
-
 	w, err := hdwallet.NewFromMnemonic(mn)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	wallet := &Wallet{w}
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 20; i++ {
 		wallet.Account(i)
 	}
 

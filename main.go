@@ -1,9 +1,7 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
-	"fmt"
 	"io"
 	"lava-farmer/ethereum"
 	"lava-farmer/pkg"
@@ -13,8 +11,7 @@ import (
 
 type env struct {
 	EthMainnet   string `json:"eth_mainnet"`
-	EvmosMainnet string `json:"evmos_mainnet"`
-	EvmosTestnet string `json:"evmos_testnet"`
+	StarkMainnet string `json:"stark_mainnet"`
 	StarkTestnet string `json:"stark_testnet"`
 	Mnemonic     string `json:"mnemonic"`
 }
@@ -26,6 +23,7 @@ type network interface {
 }
 
 func main() {
+
 	ns := []network{}
 	file, err := os.Open("env.json")
 	if err != nil {
@@ -42,30 +40,27 @@ func main() {
 	}
 
 	w := pkg.NewWallet(e.Mnemonic)
+	var starkT, starkM, ethM network
 
-	// evmosT := evmos.NewNetwork(e.EvmosTestnet, w)
-	starkT := stark.NewNetwork(e.StarkTestnet)
-	ns = append(ns, starkT)
-
-	for _, n := range ns {
-		fmt.Println("Fund These Addresses: ")
-		fmt.Println()
-		fmt.Printf("%s: \n", n.Name())
-		fmt.Printf("  {\n")
-
-		for _, a := range n.Wallets() {
-			fmt.Printf("\t%s\n", a)
-		}
-		fmt.Printf("  }\n\n")
+	if len(e.StarkTestnet) > 0 {
+		starkT = stark.NewNetwork(e.StarkTestnet)
+		ns = append(ns, starkT)
+	}
+	if len(e.StarkMainnet) > 0 {
+		starkM = stark.NewNetwork(e.StarkMainnet)
+		ns = append(ns, starkM)
 	}
 
-	ethM := ethereum.NewNetwork(e.EthMainnet, w)
+	if len(e.EthMainnet) > 0 {
+		ethM = ethereum.NewNetwork(e.EthMainnet, w)
+		ns = append(ns, ethM)
+	}
 
-	fmt.Print("Enter >>> ")
+	for _, n := range ns {
+		if n != nil {
+			go n.Run()
+		}
+	}
 
-	reader := bufio.NewReader(os.Stdin)
-	reader.ReadString('\n')
-	go starkT.Run()
-	go ethM.Run()
 	select {}
 }

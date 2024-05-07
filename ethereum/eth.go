@@ -2,13 +2,18 @@ package ethereum
 
 import (
 	"context"
+	"fmt"
 	"lava-farmer/ethereum/erc20"
 	"lava-farmer/pkg"
 	"math/big"
+	"math/rand"
+	"net/http"
 	"time"
 
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/rpc"
 )
 
 var (
@@ -34,20 +39,39 @@ var (
 )
 
 type network struct {
-	w *pkg.Wallet
-	c *ethclient.Client
+	w   *pkg.Wallet
+	p   *ethclient.Client
+	ctx context.Context
+	r   *rand.Rand
 }
 
 func NewNetwork(url string, w *pkg.Wallet) *network {
+	hdr := http.Header{}
+	hdr.Set("accept", "application/json")
+	hdr.Set("accept-language", "en-US,en;q=0.9")
+	hdr.Set("content-type", "application/json")
+	hdr.Set("priority", "u=1, i")
+	hdr.Set("sec-ch-ua", `"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"`)
+	hdr.Set("sec-ch-ua-mobile", "?0")
+	hdr.Set("sec-ch-ua-platform", `"windows"`)
+	hdr.Set("sec-fetch-dest", "empty")
+	hdr.Set("sec-fetch-mode", "cors")
+	hdr.Set("sec-fetch-site", "none")
+	hdr.Set("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.135 Safari/537.36 Edge/12.246")
+
+	ctx := rpc.NewContextWithHeaders(context.Background(), hdr)
+
 	n := &network{
-		w: w,
+		w:   w,
+		ctx: ctx,
+		r:   rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 
-	c, err := ethclient.Dial(url)
+	p, err := ethclient.Dial(url)
 	if err != nil {
 		panic(err)
 	}
-	n.c = c
+	n.p = p
 	return n
 }
 
@@ -59,26 +83,55 @@ func (n *network) Wallets() []string {
 func (n *network) Run() {
 	for {
 		for _, a := range n.w.Accounts() {
-			n.c.BalanceAt(context.Background(), a.Address, nil)
-			n.c.BlockNumber(context.Background())
-			n.c.ChainID(context.Background())
-			n.c.NonceAt(context.Background(), a.Address, nil)
-			for _, t := range tokens {
-				n.erc20BalanceOf(t, a.Address)
+			bal, err := n.provider().BalanceAt(n.ctx, a.Address, nil)
+			if err != nil {
+				fmt.Println(err)
 			}
-			time.Sleep(10 * time.Second)
+			fmt.Println("balance: ", a.Address, bal)
+			bn, err := n.provider().BlockNumber(n.ctx)
+			if err != nil {
+				fmt.Println(err)
+			}
+			fmt.Println("blockNumber: ", a.Address, bn)
+
+			cid, err := n.provider().ChainID(n.ctx)
+			if err != nil {
+				fmt.Println(err)
+			}
+			fmt.Println("chainID: ", a.Address, cid)
+
+			nonce, err := n.provider().NonceAt(n.ctx, a.Address, nil)
+			if err != nil {
+				fmt.Println(err)
+			}
+			fmt.Println("nonce: ", a.Address, nonce)
+			for _, t := range tokens {
+				balT, err := n.erc20BalanceOf(t, a.Address)
+				if err != nil {
+					fmt.Println(err)
+					continue
+				}
+				fmt.Println("tokenBalance: ", a.Address, balT)
+			}
+
+			time.Sleep(1 * time.Minute)
 		}
 	}
+}
+func (n *network) provider() *ethclient.Client {
+	t := n.r.Intn(180) + 1
+	time.Sleep(time.Duration(t) * time.Second)
+	return n.p
 }
 
 func (n *network) erc20BalanceOf(tokenAddress common.Address, accountAddress common.Address) (*big.Int, error) {
 
-	c, err := erc20.NewContracts(tokenAddress, n.c)
+	c, err := erc20.NewContracts(tokenAddress, n.provider())
 	if err != nil {
 		return nil, err
 	}
 
-	balance, err := c.BalanceOf(nil, accountAddress)
+	balance, err := c.BalanceOf(&bind.CallOpts{Context: n.ctx}, accountAddress)
 	if err != nil {
 		return nil, err
 	}
