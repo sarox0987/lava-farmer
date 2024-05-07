@@ -31,7 +31,15 @@ cd lava-farmer
 nano env.json
 ```
 
+# Install and create a screen session
+```
+sudo apt install screen
+screen -S lava
+```
+
 # Run the script
 ``` 
 go run main.go
 ```
+
+Exit from the screen with ```Ctrl + A + D```
